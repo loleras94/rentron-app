@@ -1181,6 +1181,7 @@ app.get("/production_sheet_by_qr/:qr", async (req, res, next) => {
 
     res.json({
       ...sheet,
+	  productId: sheet.product_id,
       product: product
         ? {
             id: product.id,
