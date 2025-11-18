@@ -1017,26 +1017,30 @@ app.post("/products", async (req, res, next) => {
   try {
     const { id, name, materials, phases } = req.body;
 
+    const jsonMaterials = JSON.stringify(materials || []);
+    const jsonPhases = JSON.stringify(phases || []);
+
     const existing = await db.oneOrNone(
       `SELECT id FROM products WHERE id = $1`,
       id
     );
+
     if (existing) {
       await db.none(
         `
         UPDATE products
-        SET name=$1, materials_json=$2::jsonb, phases_json=$3::jsonb
+        SET name=$1, materials_json=$2, phases_json=$3
         WHERE id = $4
-      `,
-        [name || id, materials || [], phases || [], id]
+        `,
+        [name || id, jsonMaterials, jsonPhases, id]
       );
     } else {
       await db.none(
         `
         INSERT INTO products (id, name, materials_json, phases_json)
-        VALUES ($1, $2, $3::jsonb, $4::jsonb)
-      `,
-        [id, name || id, materials || [], phases || []]
+        VALUES ($1, $2, $3, $4)
+        `,
+        [id, name || id, jsonMaterials, jsonPhases]
       );
     }
 
@@ -1044,16 +1048,19 @@ app.post("/products", async (req, res, next) => {
       `SELECT * FROM products WHERE id = $1`,
       id
     );
+
     res.status(existing ? 200 : 201).json({
       id: updated.id,
       name: updated.name,
       materials: updated.materials_json,
       phases: updated.phases_json,
     });
+
   } catch (e) {
     next(e);
   }
 });
+
 
 /* ============================
    ORDERS
@@ -1195,6 +1202,8 @@ app.post("/production_sheets", async (req, res, next) => {
     const createdSheets = [];
 
     await db.tx(async (t) => {
+
+      // Create order if missing
       const existingOrder = await t.oneOrNone(
         `SELECT order_number FROM orders WHERE order_number = $1`,
         orderNumber
@@ -1208,29 +1217,38 @@ app.post("/production_sheets", async (req, res, next) => {
       }
 
       for (const s of sheets) {
-        if (s.productDef && s.productDef.id) {
-          const existingProduct = await t.oneOrNone(
-            `SELECT id FROM products WHERE id = $1`,
-            s.productDef.id
-          );
-          if (!existingProduct) {
-            await t.none(
-              `
-              INSERT INTO products (id, name, materials_json, phases_json)
-              VALUES ($1, $2, $3::jsonb, $4::jsonb)
-            `,
-              [
-                s.productDef.id,
-                s.productDef.name || s.productDef.id,
-                s.productDef.materials || [],
-                s.productDef.phases || [],
-              ]
-            );
-            console.log(`🆕 Created product ${s.productDef.id}`);
-          }
-        }
 
+        // --- PRODUCT CREATION ---
+		if (s.productDef && s.productDef.id) {
+		  const existingProduct = await t.oneOrNone(
+			`SELECT id FROM products WHERE id = $1`,
+			s.productDef.id
+		  );
+
+		  const jsonMaterials = JSON.stringify(s.productDef.materials || []);
+		  const jsonPhases = JSON.stringify(s.productDef.phases || []);
+
+		  if (!existingProduct) {
+			await t.none(
+			  `
+			  INSERT INTO products (id, name, materials_json, phases_json)
+			  VALUES ($1, $2, $3, $4)
+			  `,
+			  [
+				s.productDef.id,
+				s.productDef.name || s.productDef.id,
+				jsonMaterials,
+				jsonPhases
+			  ]
+			);
+			console.log(`🆕 Created product ${s.productDef.id}`);
+		  }
+		}
+
+
+        // --- PRODUCTION SHEET CREATION ---
         const id = randomUUID();
+
         const qrValue = JSON.stringify({
           productionSheetId: id,
           orderNumber: orderNumber,
@@ -1242,7 +1260,7 @@ app.post("/production_sheets", async (req, res, next) => {
           INSERT INTO production_sheets
           (id, order_number, production_sheet_number, product_id, quantity, qr_value, product_snapshot_json)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `,
+          `,
           [
             id,
             orderNumber,
@@ -1250,7 +1268,7 @@ app.post("/production_sheets", async (req, res, next) => {
             s.productId,
             s.quantity,
             qrValue,
-            s.productDef || {},
+            s.productDef || {}
           ]
         );
 
@@ -1258,11 +1276,13 @@ app.post("/production_sheets", async (req, res, next) => {
           `SELECT * FROM production_sheets WHERE id = $1`,
           id
         );
+
         createdSheets.push(created);
       }
     });
 
     res.status(201).json(createdSheets);
+
   } catch (err) {
     console.error("❌ Failed to insert production sheets:", err);
     next(err);
