@@ -1268,16 +1268,24 @@ app.post("/production_sheets", async (req, res, next) => {
             s.productId,
             s.quantity,
             qrValue,
-            s.productDef || {}
+            JSON.stringify(s.productDef || {})
           ]
         );
 
-        const created = await t.one(
-          `SELECT * FROM production_sheets WHERE id = $1`,
-          id
-        );
+		const created = await t.one(
+		  `SELECT * FROM production_sheets WHERE id = $1`,
+		  id
+		);
 
-        createdSheets.push(created);
+		createdSheets.push({
+		  id: created.id,
+		  orderNumber: created.order_number,
+		  productionSheetNumber: created.production_sheet_number,
+		  productId: created.product_id,
+		  quantity: created.quantity,
+		  qrValue: created.qr_value,
+		  productSnapshot: created.product_snapshot_json
+		});
       }
     });
 
