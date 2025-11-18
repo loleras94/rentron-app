@@ -1025,7 +1025,7 @@ app.post("/products", async (req, res, next) => {
       await db.none(
         `
         UPDATE products
-        SET name = $1, materials_json = $2, phases_json = $3
+        SET name=$1, materials_json=$2::jsonb, phases_json=$3::jsonb
         WHERE id = $4
       `,
         [name || id, materials || [], phases || [], id]
@@ -1034,7 +1034,7 @@ app.post("/products", async (req, res, next) => {
       await db.none(
         `
         INSERT INTO products (id, name, materials_json, phases_json)
-        VALUES ($1, $2, $3, $4)
+        VALUES ($1, $2, $3::jsonb, $4::jsonb)
       `,
         [id, name || id, materials || [], phases || []]
       );
@@ -1217,7 +1217,7 @@ app.post("/production_sheets", async (req, res, next) => {
             await t.none(
               `
               INSERT INTO products (id, name, materials_json, phases_json)
-              VALUES ($1, $2, $3, $4)
+              VALUES ($1, $2, $3::jsonb, $4::jsonb)
             `,
               [
                 s.productDef.id,
