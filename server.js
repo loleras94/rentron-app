@@ -492,18 +492,19 @@ async function initDB() {
       status TEXT
     );
 
+  CREATE TABLE IF NOT EXISTS material_history (
+    id UUID PRIMARY KEY,
+    material_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    details JSONB NOT NULL
+  );
+
     CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku);
     CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
     CREATE INDEX IF NOT EXISTS idx_transactions_item ON transactions(item_id);
   `);
   
-	CREATE TABLE IF NOT EXISTS material_history (
-	  id UUID PRIMARY KEY,
-	  material_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-	  event_type TEXT NOT NULL,
-	  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	  details JSONB NOT NULL
-	);
   
 
   // Trigger for updated_at
