@@ -732,24 +732,37 @@ app.get("/api/materials/search", async (req, res) => {
       [`%${term}%`]
     );
 
-+   // Load history for all material IDs in one request
-+   const ids = rows.map(r => r.id);
-+   const historyRows = await db.any(
-+     `SELECT * FROM material_history WHERE material_id IN ($1:csv) ORDER BY timestamp ASC`,
-+     [ids]
-+   );
+    // If no results, return empty list
+    if (rows.length === 0) {
+      return res.json([]);
+    }
 
-+   // Group history per material
-+   const historyMap = {};
-+   for (const h of historyRows) {
-+     if (!historyMap[h.material_id]) historyMap[h.material_id] = [];
-+     historyMap[h.material_id].push({
-+       type: h.event_type,
-+       timestamp: h.timestamp,
-+       details: h.details
-+     });
-+   }
+    // Get all material IDs
+    const ids = rows.map(r => r.id);
 
+    // Load all history entries
+    const historyRows = await db.any(
+      `
+      SELECT id, material_id, event_type, timestamp, details
+      FROM material_history
+      WHERE material_id IN ($1:csv)
+      ORDER BY timestamp ASC
+      `,
+      [ids]
+    );
+
+    // Group history by material_id
+    const historyMap = {};
+    for (const h of historyRows) {
+      if (!historyMap[h.material_id]) historyMap[h.material_id] = [];
+      historyMap[h.material_id].push({
+        type: h.event_type,
+        timestamp: h.timestamp,
+        details: h.details
+      });
+    }
+
+    // Build frontend-ready material objects
     const materials = rows.map((i) => ({
       id: String(i.id),
       materialCode: i.sku || i.name,
@@ -757,18 +770,14 @@ app.get("/api/materials/search", async (req, res) => {
       currentQuantity: i.quantity,
       location:
         i.area && i.position ? { area: i.area, position: i.position } : null,
-
-+     history: [
-+       // first entry: CREATED
-+       {
-+         type: "CREATED",
-+         timestamp: i.created_at,
-+         details: { quantity: i.quantity }
-+       },
-+
-+       // add all events from material_history
-+       ...(historyMap[i.id] || [])
-+     ]
+      history: [
+        {
+          type: "CREATED",
+          timestamp: i.created_at,
+          details: { quantity: i.quantity }
+        },
+        ...(historyMap[i.id] || [])
+      ]
     }));
 
     res.json(materials);
@@ -777,6 +786,7 @@ app.get("/api/materials/search", async (req, res) => {
     res.status(500).json({ error: "Database search failed" });
   }
 });
+
 
 
 app.post("/items", async (req, res, next) => {
