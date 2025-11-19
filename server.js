@@ -496,6 +496,15 @@ async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
     CREATE INDEX IF NOT EXISTS idx_transactions_item ON transactions(item_id);
   `);
+  
+	CREATE TABLE IF NOT EXISTS material_history (
+	  id UUID PRIMARY KEY,
+	  material_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	  event_type TEXT NOT NULL,
+	  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	  details JSONB NOT NULL
+	);
+  
 
   // Trigger for updated_at
   await db.none(`
@@ -513,6 +522,57 @@ async function initDB() {
     FOR EACH ROW
     EXECUTE FUNCTION set_items_updated_at();
   `);
+
+
+	await db.none(`
+	  INSERT INTO material_history (id, material_id, event_type, details)
+	  VALUES ($1, $2, 'PLACED', $3)
+	`, [
+	  randomUUID(),
+	  materialId,
+	  JSON.stringify({
+		to: { area, position }
+	  })
+	]);
+
+	await db.none(`
+	  INSERT INTO material_history (id, material_id, event_type, details)
+	  VALUES ($1, $2, 'MOVED', $3)
+	`, [
+	  randomUUID(),
+	  materialId,
+	  JSON.stringify({
+		from: { area: oldArea, position: oldPosition },
+		to: { area: newArea, position: newPosition }
+	  })
+	]);
+
+	await db.none(`
+	  INSERT INTO material_history (id, material_id, event_type, details)
+	  VALUES ($1, $2, 'CONSUMED', $3)
+	`, [
+	  randomUUID(),
+	  materialId,
+	  JSON.stringify({
+		productionCode,
+		consumed: qty
+	  })
+	]);
+
+	await db.none(`
+	  INSERT INTO material_history (id, material_id, event_type, details)
+	  VALUES ($1, $2, 'PARTIALLY_CONSUMED', $3)
+	`, [
+	  randomUUID(),
+	  materialId,
+	  JSON.stringify({
+		productionCode,
+		consumed: qty,
+		remaining: newRemaining,
+		newLocation: { area, position }
+	  })
+	]);
+
 
   // Ensure default Manager user
   const { count: userCount } = await db.one(
@@ -659,6 +719,7 @@ app.get("/items/:id", async (req, res, next) => {
 app.get("/api/materials/search", async (req, res) => {
   try {
     const term = (req.query.q || "").toString().trim();
+
     const rows = await db.any(
       `
       SELECT *
@@ -666,9 +727,27 @@ app.get("/api/materials/search", async (req, res) => {
       WHERE sku ILIKE $1 OR name ILIKE $1
       ORDER BY sku ASC
       LIMIT 100
-    `,
+      `,
       [`%${term}%`]
     );
+
++   // Load history for all material IDs in one request
++   const ids = rows.map(r => r.id);
++   const historyRows = await db.any(
++     `SELECT * FROM material_history WHERE material_id IN ($1:csv) ORDER BY timestamp ASC`,
++     [ids]
++   );
+
++   // Group history per material
++   const historyMap = {};
++   for (const h of historyRows) {
++     if (!historyMap[h.material_id]) historyMap[h.material_id] = [];
++     historyMap[h.material_id].push({
++       type: h.event_type,
++       timestamp: h.timestamp,
++       details: h.details
++     });
++   }
 
     const materials = rows.map((i) => ({
       id: String(i.id),
@@ -677,13 +756,18 @@ app.get("/api/materials/search", async (req, res) => {
       currentQuantity: i.quantity,
       location:
         i.area && i.position ? { area: i.area, position: i.position } : null,
-      history: [
-        {
-          timestamp: i.updated_at || i.created_at,
-          type: "CREATED",
-          details: { quantity: i.quantity },
-        },
-      ],
+
++     history: [
++       // first entry: CREATED
++       {
++         type: "CREATED",
++         timestamp: i.created_at,
++         details: { quantity: i.quantity }
++       },
++
++       // add all events from material_history
++       ...(historyMap[i.id] || [])
++     ]
     }));
 
     res.json(materials);
@@ -692,6 +776,7 @@ app.get("/api/materials/search", async (req, res) => {
     res.status(500).json({ error: "Database search failed" });
   }
 });
+
 
 app.post("/items", async (req, res, next) => {
   try {
@@ -1127,7 +1212,15 @@ app.get("/production_sheets/:orderNumber", async (req, res, next) => {
     `,
       req.params.orderNumber
     );
-    res.json(rows);
+	res.json(rows.map(r => ({
+	  id: r.id,
+	  orderNumber: r.order_number,
+	  productionSheetNumber: r.production_sheet_number,
+	  productId: r.product_id,
+	  quantity: r.quantity,
+	  qrValue: r.qr_value,
+	  createdAt: r.created_at
+	})));
   } catch (e) {
     next(e);
   }
@@ -1179,19 +1272,24 @@ app.get("/production_sheet_by_qr/:qr", async (req, res, next) => {
       sheet.production_sheet_number
     );
 
-    res.json({
-      ...sheet,
-	  productId: sheet.product_id,
-      product: product
-        ? {
-            id: product.id,
-            name: product.name,
-            materials: product.materials,
-            phases: product.phases,
-          }
-        : null,
-      phaseLogs,
-    });
+	res.json({
+	  id: sheet.id,
+	  qrValue: sheet.qr_value,
+	  productionSheetNumber: sheet.production_sheet_number,  // FIX
+	  productId: sheet.product_id,                           // FIX
+	  quantity: sheet.quantity,
+	  orderNumber: sheet.order_number,
+	  product: product
+		? {
+			id: product.id,
+			name: product.name,
+			materials: product.materials,
+			phases: product.phases,
+		  }
+		: null,
+	  phaseLogs
+	});
+
   } catch (e) {
     next(e);
   }
