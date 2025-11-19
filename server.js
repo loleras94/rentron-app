@@ -1729,6 +1729,175 @@ app.post(
   }
 );
 
+app.post("/materials/place", async (req, res) => {
+  try {
+    const { materialId, area, position } = req.body;
+
+    if (!materialId || !area || !position)
+      return res.status(400).json({ error: "materialId, area, position required" });
+
+    const item = await db.oneOrNone(
+      `SELECT * FROM items WHERE id=$1`,
+      materialId
+    );
+    if (!item) return res.status(404).json({ error: "Material not found" });
+
+    await db.tx(async (t) => {
+      // Update item location
+      await t.none(
+        `UPDATE items SET area=$1, position=$2 WHERE id=$3`,
+        [area, position, materialId]
+      );
+
+      // Log PLACED event
+      await t.none(
+        `
+        INSERT INTO material_history (id, material_id, event_type, details)
+        VALUES ($1, $2, 'PLACED', $3)
+        `,
+        [
+          randomUUID(),
+          materialId,
+          JSON.stringify({ to: { area, position } })
+        ]
+      );
+    });
+
+    res.json({ ok: true });
+
+  } catch (e) {
+    console.error("PLACE error:", e);
+    res.status(500).json({ error: "Failed to place material" });
+  }
+});
+
+app.post("/materials/move", async (req, res) => {
+  try {
+    const { materialId, newArea, newPosition } = req.body;
+
+    if (!materialId || !newArea || !newPosition)
+      return res.status(400).json({ error: "materialId, newArea, newPosition required" });
+
+    const item = await db.oneOrNone(
+      `SELECT * FROM items WHERE id=$1`,
+      materialId
+    );
+    if (!item) return res.status(404).json({ error: "Material not found" });
+
+    const oldArea = item.area || null;
+    const oldPosition = item.position || null;
+
+    await db.tx(async (t) => {
+      // Update location
+      await t.none(
+        `UPDATE items SET area=$1, position=$2 WHERE id=$3`,
+        [newArea, newPosition, materialId]
+      );
+
+      // Log MOVE entry
+      await t.none(
+        `
+        INSERT INTO material_history (id, material_id, event_type, details)
+        VALUES ($1, $2, 'MOVED', $3)
+        `,
+        [
+          randomUUID(),
+          materialId,
+          JSON.stringify({
+            from: { area: oldArea, position: oldPosition },
+            to: { area: newArea, position: newPosition }
+          })
+        ]
+      );
+    });
+
+    res.json({ ok: true });
+
+  } catch (e) {
+    console.error("MOVE error:", e);
+    res.status(500).json({ error: "Failed to move material" });
+  }
+});
+
+app.post("/materials/consume", async (req, res) => {
+  try {
+    const { materialId, qty, productionCode, moveRemaining } = req.body;
+
+    if (!materialId || !qty || !productionCode)
+      return res.status(400).json({
+        error: "materialId, qty, productionCode required"
+      });
+
+    const item = await db.oneOrNone(
+      `SELECT * FROM items WHERE id=$1`,
+      materialId
+    );
+    if (!item) return res.status(404).json({ error: "Material not found" });
+
+    if (item.quantity <= 0)
+      return res.status(400).json({ error: "Material already empty" });
+
+    const newRemaining = item.quantity - qty;
+    if (newRemaining < 0)
+      return res.status(400).json({ error: "Not enough stock" });
+
+    await db.tx(async (t) => {
+      // Update stock
+      await t.none(
+        `UPDATE items SET quantity=$1 WHERE id=$2`,
+        [newRemaining, materialId]
+      );
+
+      if (newRemaining === 0) {
+        // Fully consumed
+        await t.none(
+          `INSERT INTO material_history (id, material_id, event_type, details)
+           VALUES ($1, $2, 'CONSUMED', $3)`,
+          [
+            randomUUID(),
+            materialId,
+            JSON.stringify({
+              productionCode,
+              consumed: qty
+            })
+          ]
+        );
+      } else {
+        // Partially consumed
+        await t.none(
+          `INSERT INTO material_history (id, material_id, event_type, details)
+           VALUES ($1, $2, 'PARTIALLY_CONSUMED', $3)`,
+          [
+            randomUUID(),
+            materialId,
+            JSON.stringify({
+              productionCode,
+              consumed: qty,
+              remaining: newRemaining,
+              newLocation: moveRemaining || null
+            })
+          ]
+        );
+
+        // Update location if required
+        if (moveRemaining) {
+          await t.none(
+            `UPDATE items SET area=$1, position=$2 WHERE id=$3`,
+            [moveRemaining.area, moveRemaining.position, materialId]
+          );
+        }
+      }
+    });
+
+    res.json({ ok: true, remaining: newRemaining });
+
+  } catch (e) {
+    console.error("CONSUME error:", e);
+    res.status(500).json({ error: "Failed to consume material" });
+  }
+});
+
+
 /* ============================
    START SERVER
    ============================ */
