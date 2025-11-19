@@ -525,56 +525,6 @@ async function initDB() {
   `);
 
 
-	await db.none(`
-	  INSERT INTO material_history (id, material_id, event_type, details)
-	  VALUES ($1, $2, 'PLACED', $3)
-	`, [
-	  randomUUID(),
-	  materialId,
-	  JSON.stringify({
-		to: { area, position }
-	  })
-	]);
-
-	await db.none(`
-	  INSERT INTO material_history (id, material_id, event_type, details)
-	  VALUES ($1, $2, 'MOVED', $3)
-	`, [
-	  randomUUID(),
-	  materialId,
-	  JSON.stringify({
-		from: { area: oldArea, position: oldPosition },
-		to: { area: newArea, position: newPosition }
-	  })
-	]);
-
-	await db.none(`
-	  INSERT INTO material_history (id, material_id, event_type, details)
-	  VALUES ($1, $2, 'CONSUMED', $3)
-	`, [
-	  randomUUID(),
-	  materialId,
-	  JSON.stringify({
-		productionCode,
-		consumed: qty
-	  })
-	]);
-
-	await db.none(`
-	  INSERT INTO material_history (id, material_id, event_type, details)
-	  VALUES ($1, $2, 'PARTIALLY_CONSUMED', $3)
-	`, [
-	  randomUUID(),
-	  materialId,
-	  JSON.stringify({
-		productionCode,
-		consumed: qty,
-		remaining: newRemaining,
-		newLocation: { area, position }
-	  })
-	]);
-
-
   // Ensure default Manager user
   const { count: userCount } = await db.one(
     `SELECT COUNT(*)::int AS count FROM users`
