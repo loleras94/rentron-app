@@ -669,7 +669,7 @@ app.get("/items/:id", async (req, res, next) => {
 
 app.get("/api/materials/search", async (req, res) => {
   try {
-    const term = (req.query.q || "").toString().trim();
+    const term = (req.query.term || "").toString().trim();
 
     const rows = await db.any(
       `
@@ -682,15 +682,10 @@ app.get("/api/materials/search", async (req, res) => {
       [`%${term}%`]
     );
 
-    // If no results, return empty list
-    if (rows.length === 0) {
-      return res.json([]);
-    }
+    if (rows.length === 0) return res.json([]);
 
-    // Get all material IDs
     const ids = rows.map(r => r.id);
 
-    // Load all history entries
     const historyRows = await db.any(
       `
       SELECT id, material_id, event_type, timestamp, details
@@ -701,18 +696,24 @@ app.get("/api/materials/search", async (req, res) => {
       [ids]
     );
 
-    // Group history by material_id
     const historyMap = {};
     for (const h of historyRows) {
       if (!historyMap[h.material_id]) historyMap[h.material_id] = [];
+
+      let details;
+      try {
+        details = typeof h.details === "string" ? JSON.parse(h.details) : h.details;
+      } catch {
+        details = {};
+      }
+
       historyMap[h.material_id].push({
         type: h.event_type,
         timestamp: h.timestamp,
-        details: h.details
+        details
       });
     }
 
-    // Build frontend-ready material objects
     const materials = rows.map((i) => ({
       id: String(i.id),
       materialCode: i.sku || i.name,
